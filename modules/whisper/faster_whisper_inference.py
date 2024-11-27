@@ -1,5 +1,6 @@
 import os
 import time
+import huggingface_hub
 import numpy as np
 import torch
 from typing import BinaryIO, Union, Tuple, List
@@ -118,7 +119,8 @@ class FasterWhisperInference(BaseTranscriptionPipeline):
         Parameters
         ----------
         model_size: str
-            Size of whisper model
+            Size of whisper model. If you enter the huggingface repo id, it will try to download the model
+            automatically from huggingface.
         compute_type: str
             Compute type for transcription.
             see more info : https://opennmt.net/CTranslate2/quantization.html
@@ -126,13 +128,34 @@ class FasterWhisperInference(BaseTranscriptionPipeline):
             Indicator to show progress directly in gradio.
         """
         progress(0, desc="Initializing Model..")
-        self.current_model_size = self.model_paths[model_size]
+
+        model_size_dirname = model_size.replace("/", "--") if "/" in model_size else model_size
+        if model_size not in self.model_paths and model_size_dirname not in self.model_paths:
+            print(f"Model is not detected. Trying to download \"{model_size}\" from huggingface to "
+                  f"\"{os.path.join(self.model_dir, model_size_dirname)} ...")
+            huggingface_hub.snapshot_download(
+                model_size,
+                local_dir=os.path.join(self.model_dir, model_size_dirname),
+            )
+            self.model_paths = self.get_model_paths()
+            gr.Info(f"Model is downloaded with the name \"{model_size_dirname}\"")
+
+        self.current_model_size = self.model_paths[model_size_dirname]
+
+        local_files_only = False
+        hf_prefix = "models--Systran--faster-whisper-"
+        official_model_path = os.path.join(self.model_dir, hf_prefix+model_size)
+        if ((os.path.isdir(self.current_model_size) and os.path.exists(self.current_model_size)) or
+            (model_size in faster_whisper.available_models() and os.path.exists(official_model_path))):
+            local_files_only = True
+
         self.current_compute_type = compute_type
         self.model = faster_whisper.WhisperModel(
             device=self.device,
             model_size_or_path=self.current_model_size,
             download_root=self.model_dir,
-            compute_type=self.current_compute_type
+            compute_type=self.current_compute_type,
+            local_files_only=local_files_only
         )
 
     def get_model_paths(self):
